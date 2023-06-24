@@ -5,6 +5,8 @@ using MagicVilla_CouponAPI;
 using MagicVilla_CouponAPI.Data;
 using MagicVilla_CouponAPI.Models;
 using MagicVilla_CouponAPI.Models.DTO;
+using MagicVilla_CouponAPI.Repository;
+using MagicVilla_CouponAPI.Repository.IRepository;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -12,6 +14,7 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddScoped<ICouponRepository, CouponRepository>();
 builder.Services.AddDbContext<AppDbContext>(option =>
 {
     option.UseSqlServer(builder.Configuration.GetConnectionString("DefaultConnection"));
@@ -33,10 +36,10 @@ if (app.Environment.IsDevelopment())
 
 app.MapGet("/hello", () => "HELLO");
 
-app.MapGet("/api/coupon", (AppDbContext context) =>
+app.MapGet("/api/coupon", async (ICouponRepository context) =>
     {
         ApiResponse response = new();
-        response.Result = context.Coupons;
+        response.Result = await context.GetAllAsync();
         response.IsSuccess = true;
         response.StatusCode = HttpStatusCode.OK;
 
@@ -45,20 +48,20 @@ app.MapGet("/api/coupon", (AppDbContext context) =>
     .Produces<ApiResponse>();
 
 app.MapGet("/api/coupon/{id:int}",
-        async (AppDbContext context, int id) =>
+        async (ICouponRepository context, int id) =>
         {
             ApiResponse response = new();
-            response.Result = await context.Coupons.FirstOrDefaultAsync(u => u.Id == id);
+            response.Result = await context.GetAsync(id);
             response.IsSuccess = true;
             response.StatusCode = HttpStatusCode.OK;
 
             return Results.Ok(response);
         })
     .WithName("GetCoupon")
-    .Produces<ApiResponse>(200);
+    .Produces<ApiResponse>();
 
 app.MapPost("/api/coupon",
-        async (AppDbContext context, IValidator<CouponCreateDto> validator, IMapper mapper,
+        async (ICouponRepository context, IValidator<CouponCreateDto> validator, IMapper mapper,
             [FromBody] CouponCreateDto couponCDto) =>
         {
             ApiResponse response = new() { IsSuccess = false, StatusCode = HttpStatusCode.BadRequest };
@@ -72,8 +75,8 @@ app.MapPost("/api/coupon",
 
             var coupon = mapper.Map<Coupon>(couponCDto);
 
-            context.Coupons.Add(coupon);
-            await context.SaveChangesAsync();
+            context.CreateAsync(coupon);
+            await context.SaveAsync();
             var couponDto = mapper.Map<CouponDto>(coupon);
 
             response.Result = couponCDto;
@@ -85,13 +88,13 @@ app.MapPost("/api/coupon",
     .WithName("CreateCoupon").Accepts<CouponCreateDto>("application/json")
     .Produces<ApiResponse>(201).Produces(400);
 
-app.MapPut("/api/coupon/{id:int}", async (AppDbContext context, IValidator<CouponUpdateDto> validator, IMapper mapper,
+app.MapPut("/api/coupon/{id:int}", async (ICouponRepository context, IValidator<CouponUpdateDto> validator,
+        IMapper mapper,
         int id,
         [FromBody] CouponUpdateDto couponUpdateDto) =>
     {
         ApiResponse response = new()
             { IsSuccess = false, StatusCode = HttpStatusCode.BadRequest, ErrorMessages = { "Invalid Id For Coupon" } };
-        if (!context.Coupons.Any(u => u.Id == id)) return Results.BadRequest(response);
 
         var validation = await validator.ValidateAsync(couponUpdateDto);
 
@@ -101,11 +104,11 @@ app.MapPut("/api/coupon/{id:int}", async (AppDbContext context, IValidator<Coupo
             return Results.BadRequest(response);
         }
 
-        var coupon = mapper.Map<Coupon>(couponUpdateDto);
-        context.Coupons.Update(coupon);
-        await context.SaveChangesAsync();
+        context.UpdateAsync(mapper.Map<Coupon>(couponUpdateDto));
 
-        var couponDto = mapper.Map<CouponDto>(coupon);
+        await context.SaveAsync();
+
+        var couponDto = mapper.Map<CouponDto>(context.GetAsync(couponUpdateDto.Id));
         response.Result = couponDto;
         response.IsSuccess = true;
         response.StatusCode = HttpStatusCode.Accepted;
@@ -113,21 +116,21 @@ app.MapPut("/api/coupon/{id:int}", async (AppDbContext context, IValidator<Coupo
         return Results.Ok(response);
     })
     .WithName("UpdateCoupon").Accepts<CouponUpdateDto>("application/json")
-    .Produces<ApiResponse>(200).Produces(400);
+    .Produces<ApiResponse>().Produces(400);
 
 
-app.MapDelete("/api/coupon/{id:int}", async (AppDbContext context, int id) =>
+app.MapDelete("/api/coupon/{id:int}", async (ICouponRepository context, int id) =>
     {
         ApiResponse response = new()
         {
             IsSuccess = false, StatusCode = HttpStatusCode.BadRequest,
             ErrorMessages = new List<string> { "Error, Invalid ID" }
         };
-        var couponToRemove = await context.Coupons.FirstOrDefaultAsync(u => u.Id == id);
+        var couponToRemove = await context.GetAsync(id);
         if (couponToRemove is null) return Results.BadRequest(response);
 
-        context.Coupons.Remove(couponToRemove);
-        await context.SaveChangesAsync();
+        context.RemoveAsync(couponToRemove);
+        await context.SaveAsync();
 
         response.Result = null;
         response.IsSuccess = true;
@@ -136,7 +139,7 @@ app.MapDelete("/api/coupon/{id:int}", async (AppDbContext context, int id) =>
         return Results.Ok(response);
     })
     .WithName("DeleteCoupon").Accepts<int>("application/json")
-    .Produces<ApiResponse>(200).Produces(400);
+    .Produces<ApiResponse>().Produces(400);
 
 app.UseHttpsRedirection();
 
